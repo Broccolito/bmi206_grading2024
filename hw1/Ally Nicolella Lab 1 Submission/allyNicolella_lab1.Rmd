@@ -1,0 +1,347 @@
+---
+title: 'Lab 1: Linear models for quantitative genetics'
+subtitle: "BMI 206"
+author: "Ally Nicolella"
+date: "10/18/24"
+output: html_document
+---
+<br>
+<br>
+### PART1: Analyzing provided genotype and phenotype data.
+
+__Prepare the data.__
+Read in the genotype and phenotype matrices. 
+```{r}
+genos = as.matrix(read.table("./genos.txt"))
+phenos = as.matrix(read.table("./phenos.txt"))
+```
+<br>
+
+Make a histogram of the phenotypes. Do they look normally distributed? Yes!
+
+```{r}
+hist(phenos)
+```
+<br>
+
+How are the genotypes encoded? The genotypes are encoded as ordinals with three possibilities: "0", "1", "2"
+```{r}
+table(genos)
+```
+<br>
+
+How many individuals are there in the dataset and how many SNPs? (Save them in `N` and `M`, respectively.)
+```{r}
+dim(genos)
+dim(phenos)
+N = dim(phenos)[1]
+M = dim(genos)[2]
+print(N)
+print(M)
+```
+
+<br>
+
+__Compute the *minor* allele frequency for every SNP. Check MAFs are <0.5.__
+```{r}
+MAFs = array(0,M)
+for(i in 1:M) {
+     MAFs[i]  = sum(genos[,i])/(2*N)
+     if(MAFs[i] > 0.5){
+       MAFs[i] = 1 - MAFs[i]
+     } 
+     
+}
+MAFs[1:10]
+max(MAFs)
+```
+<br>
+
+__Run a GWAS under an additive model and save the p-values, z-scores, and effect sizes.__
+```{r}
+pvalues = array(0,M)
+zscores = array(0,M)
+betas = array(0,M)
+for(i in 1:M) {
+	g = genos[,i]
+	res = summary(lm(phenos~g))
+	zscores[i] = res$coefficients[2,"Estimate"] / res$coefficients[2,"Std. Error"]
+	pvalues[i] = res$coefficients[2,"Pr(>|t|)"]
+	betas[i] = res$coefficients[2,"Estimate"]
+}
+```
+<br>
+
+Summarize the effect sizes.
+```{r}
+summary(betas)
+hist(betas)
+```
+<br>
+
+Are there any significantly associated SNPs? If so, which SNPs are they? Yes, 449 significant SNPs using the raw pvalue and 10 using bonferroni corrected pvalue. Please note, moving forward I use the original p-values as Katie said that we will discuss pvalue correction at greater depth in the future.
+```{r}
+# without correction
+assoc = which(pvalues<0.05)
+length(assoc) # num sig
+assoc # which SNPs are sig
+# with correction
+multTest = p.adjust(pvalues,"bonferroni")
+length(which(multTest<0.05)) # num sig
+which(multTest<0.05) # which SNPs are sig
+```
+<br>
+
+How big are their effect sizes? A few of the effects are quite large (closer to the bounds of the min/max values) while the majority are smaller (a bit closer to the mean). How significant are they? The p-values are very low, with relatively even distribution between 0 and 0.05
+```{r}
+betas[assoc]
+zscores[assoc]
+pvalues[assoc]
+```
+<br>
+
+Draw a QQ plot for log10(p) values.
+```{r}
+obsLogPvs = sort(-log10(pvalues))
+expLogPvs = sort(-log10(seq(1/M,1,1/M)))
+plot(expLogPvs,obsLogPvs,main='QQ plot')
+abline( a=0, b=1 )
+#label the significant SNPs red 
+points(expLogPvs[(M-length(assoc)):M],obsLogPvs[(M-length(assoc)):M],col="red")
+```
+<br>
+
+
+Is there inflation? Use the chi-square statistics to check.
+0.454 is used because it is the median of the chi distribution under the null hypothesis. lambdaGC was calculated to be 1.007873. This points to little to no inflation because the value is very close to 1. 
+```{r}
+chis = zscores^2
+lambdaGC = median(chis)/0.454 # why .454? 
+lambdaGC
+```
+<br>
+
+Plot the phenotype predictions for the most significant SNP.
+```{r}
+topSNP = genos[,order(pvalues)[1]]
+plot(topSNP,phenos)
+abline(lm(phenos~topSNP)$coeff,col="red")
+```
+<br>
+
+__Build a linear predictor of the phenotype using the associated SNPs.__
+```{r}
+ypred = array(0,N)
+for(i in 1:N) {
+      ypred[i] = genos[i,assoc] %*% betas[assoc]
+}
+plot(ypred,phenos)
+```
+<br>
+
+What is the correlation between the predicted phenotype and the true phenotype? 0.8953172
+```{r}
+cor(ypred,phenos)
+```
+<br>
+
+__BONUS: Test each of the associated SNPs for non-linearity.__
+```{r, eval=FALSE}
+hp = array(0,length(assoc))
+for (i in 1:length(assoc)) {
+  g = genos[,assoc[i]]
+  h = g
+  h[h==2]=0
+  #Hint: can use anova(lm(?),lm(?)) or summary(lm(?))
+  hp[i] <- anova( lm(?), lm(?) )$Pr[2] #skip multiple test correction for now
+}
+hp 
+```
+<br>
+
+BONUS: Visualize a linear SNP and a non-linear SNP.
+```{r, eval=FALSE}
+par( mfrow=c(1,2) )
+plot( ?, ? )
+points( c(0,1,2), tapply( ?, ?, mean ), col=2, pch=16, cex=3 )
+lines( c(0,1,2), tapply( ?, ?, mean ), col=2, lwd=2  )
+plot( ?, ? )
+points( c(0,1,2), tapply( ?, ?, mean ), col=2, pch=16, cex=3 )
+lines( c(0,1,2), tapply( ?, ?, mean ), col=2, lwd=2  )
+```
+<br>
+
+__Repeat the GWAS to test for recessive rather than additive genetic effects.__
+```{r}
+genos2 = genos
+genos2[genos<2]=1
+pvalues2 = array(0,M)
+zscores2 = array(0,M)
+betas2 = array(0,M)
+for(i in 1:M) {
+  g = genos2[,i]
+  res = summary(lm(phenos~g))
+  zscores2[i] = res$coefficients[2,"Estimate"] / res$coefficients[2,"Std. Error"]
+	pvalues2[i] = res$coefficients[2,"Pr(>|t|)"]
+	betas2[i] = res$coefficients[2,"Estimate"]
+}
+```
+<br>
+
+__Are the same SNPs significant or not?__ By raw pvalue, 231 SNPs are significant in both tests. 218 are unique to the original test (additive effect) while 263 are unique to the recessive effect analysis. With Bonferroni correction, all of the SNPs from the recessive effect analysis were significant in the additive effect analysis, with one SNP that was unique to the additive effect analysis.
+```{r}
+#without correction
+assoc2 = which(pvalues2<0.05)
+assoc2
+length(assoc2)
+# check to see if same SNPs are significant:
+shared = assoc[which(assoc2 %in% assoc)] #  checking in this direction since more sig in assoc2
+diff = assoc[which(!assoc2 %in% assoc)]
+length(shared)
+length(diff)
+table(assoc2 %in% assoc)
+table(assoc %in% assoc2)
+
+# with correction
+multTest2 = p.adjust(pvalues2,"bonferroni")
+length(which(multTest2<0.05)) # num sig
+which(multTest2<0.05) # which SNPs are sig
+# check to see if bonferroni SNPs are the same
+table(which(multTest2<0.05) %in% which(multTest<0.05))
+table(which(multTest<0.05) %in% which(multTest2<0.05))
+```
+<br>
+
+__How did the effect sizes change?__ # Most of the effect sizes for the additive effect model are close to zero. The spread is larger in the recessive allele analysis, with a slightly more normal distribution. 
+```{r}
+plot(betas,betas2)
+abline(lm(betas~betas2),col="red")
+plot(betas2,betas)
+abline(lm(betas~betas2),col="red")
+hist(betas)
+hist(betas2)
+cor(betas,betas2)
+```
+<br>
+
+### PART2: Simulating genotypes with LD.
+
+__Establish some important simulation parameters.__
+```{r}
+N = 1000 #number of individuals
+M = 30   #number of non-causal SNPs
+gs = matrix(0,nrow=N,ncol=M)
+```
+<br>
+
+__Simulate a GWAS data set.__
+First, simulate the causal variant.
+```{r}
+set.seed = (42) #set random seed so we all get the same numbers
+MAF = 0.5
+gC = rbinom(N,1,MAF) #causal variant
+```
+<br>
+
+Then, simulate the phenotypes given the causal variant.
+```{r}
+beta = 0.3 #association of causal variant
+pheno = gC*beta + rnorm(N) 
+```
+<br>
+
+Generate 10 SNPS in tight LD with the causal SNP.
+```{r}
+rho = 0.9
+for(i in 1:10) {
+  idx = rbinom(N,1,rho)
+  gs[,i]=gC*idx+rbinom(N,1,MAF)*(1-idx)
+  # test they have the right LD empirically
+  cat( 'Observed LD = ', cor( gs[,i], gC ), '\n' )
+  # Bonus: prove they have the right LD theoretically
+}
+```
+<br>
+
+Do the same for 10 moderate LD partners (rho=0.6).
+```{r}
+rho = 0.6
+for(i in 11:20) {
+  idx = rbinom(N,1,rho)
+  gs[,i]=gC*idx+rbinom(N,1,MAF)*(1-idx)
+  # test they have the right LD empirically
+  cat( 'Observed LD = ', cor( gs[,i], gC ), '\n' )
+  # Bonus: prove they have the right LD theoretically
+}
+```
+<br>
+
+Do the same for 10 independent SNPs (rho=0).
+```{r}
+rho = 0
+for(i in 21:30) {
+  idx = rbinom(N,1,rho)
+  gs[,i]=gC*idx+rbinom(N,1,MAF)*(1-idx)
+  # test they have the right LD empirically
+  cat( 'Observed LD = ', cor( gs[,i], gC ), '\n' )
+  # Bonus: prove they have the right LD theoretically
+}
+```
+
+__Run GWAS on the causal variant. Then run GWAS on the other variants. Keep track of the zscores only.__
+```{r}
+zsC = summary(lm(pheno~gC))$coef[2,3]
+zs = sapply( 1:M, function(i) summary(lm(pheno~gs[,i]))$coef[2,3] )
+```
+<br>
+
+Visualize the relationship between the mean z-scores at the tag SNPs and the z-score at the causal SNP.
+
+```{r}
+par( mfrow=c(2,2) )
+breaks = hist(c(0,zsC,zs),plot=F)$breaks
+hist(zs[1:10],breaks=breaks, col=1, main='LD partners')
+abline(v=zsC)
+hist(zs[11:20],breaks=breaks, col=2, main='Low-LD partner SNPs')
+abline(v=zsC)
+hist(zs[21:30],breaks=breaks, col=3, main='Independent SNPs')
+abline(v=zsC)
+```
+<br>
+
+__BONUS: Perform LD score regression. First, calculate the LD scores. There should be M+1 of them.__
+```{r, eval=FALSE}
+ldscores = ?
+ldscores
+```
+<br>
+
+BONUS: Visualize LD score regression.
+```{r,eval=FALSE}
+chis = c( ?, ? )^2
+plot( ?, chis, ylab=expression(chi^2) )
+#test for inflation
+lambdaGC = median(chis)/0.454
+lambdaGC
+```
+<br>
+
+BONUS: Estimate heritability.
+```{r,eval=FALSE}
+summary( lm( ? )$coef[2,1] * M/N
+```
+<br>
+
+BONUS: What is the true heritability?
+```{r, eval=FALSE}
+var(?) / var(?)
+```
+
+
+
+
+
+
+
+
+
