@@ -1,0 +1,401 @@
+---
+title: 'Lab 1: Linear models for quantitative genetics'
+author: "Zoe Chen"
+date: "Oct 18 2024"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: BMI 206
+---
+<br>
+<br>
+### PART1: Analyzing provided genotype and phenotype data.
+
+__Prepare the data.__
+Read in the genotype and phenotype matrices. 
+```{r}
+genos = as.matrix(read.table("./genos.txt"))
+phenos = as.matrix(read.table("./phenos.txt"))
+```
+<br>
+
+Make a histogram of the phenotypes. Do they look normally distributed?
+
+A:Yes, they look normally distributed. 
+```{r}
+hist(phenos)
+```
+<br>
+
+How are the genotypes encoded?
+
+A:They encoded as 0, 1, and 2. If we are using "A" and "G" here, 0 is "AA", 1 is "AG" and 2 is "GG".
+```{r}
+table(genos)
+```
+<br>
+
+How many individuals are there in the dataset and how many SNPs? (Save them in `N` and `M`, respectively.)
+
+A:There are 1500 individuals and 10000 SNPs. 
+```{r}
+dim(genos)
+dim(phenos)
+N = 1500
+M = 10000
+```
+
+<br>
+
+__Compute the *minor* allele frequency for every SNP. Check MAFs are <0.5.__
+```{r}
+MAFs = array(0,M)
+for(i in 1:M) {
+  #Minor Allele Frequency: compute the MAF by taking the minimum of the two allele frequencies because the MAF must always be the less common allele's frequency.
+  # Calculate allele frequencie
+  #A_freq <- (2*nrow(genos[genos[, i] == 0, ]) + nrow(genos[genos[, i] == 1, ])) / (2*nrow(genos))
+  A_freq <- ((2*table(genos[, i])[1]) + table(genos[, i])[2])/3000
+  G_freq <- 1 - A_freq
+  
+  # Minor Allele Frequency: select the minimum of the allele frequencies
+  MAFs[i] = min(A_freq, G_freq)
+}
+MAFs[1:10]
+max(MAFs)
+```
+<br>
+
+__Run a GWAS under an additive model and save the p-values, z-scores, and effect sizes.__
+```{r}
+pvalues = array(0,M)
+zscores = array(0,M)
+betas = array(0,M)
+for(i in 1:M) {
+	g = genos[,i]
+	res = summary(lm(phenos~g))
+	betas[i] = res$coefficients[2, "Estimate"]
+	zscores[i] = res$coefficients[2, "t value"]
+	pvalues[i] = res$coefficients[2, "Pr(>|t|)"]
+
+}
+
+pvalues[1:10]
+zscores[1:10]
+betas[1:10]
+
+```
+<br>
+
+Summarize the effect sizes.
+```{r}
+summary(betas)
+hist(betas)
+```
+<br>
+
+Are there any significantly associated SNPs? If so, which SNPs are they?
+
+A: Yes, when I use corrected p-val, there are 10 significant SNPs. They are listed as below. 
+```{r}
+assoc = which(pvalues<(0.05/M))
+assoc
+```
+<br>
+
+How big are their effect sizes? How significant are they? 
+
+A:The effect sizes range from -3.4007282 to 2.2455246. They are significant range from extreme p-val 3.488001e-86 to not that extreme 6.308608e-07, but all passed the threshold. 
+```{r}
+betas[assoc]
+zscores[assoc]
+pvalues[assoc]
+```
+<br>
+
+Draw a QQ plot for log10(p) values.
+```{r}
+obsLogPvs = sort(-log10(pvalues))
+expLogPvs = sort(-log10(seq(1/M,1,1/M)))
+plot(expLogPvs,obsLogPvs,main='QQ plot')
+abline( a=0, b=1 )
+#label the significant SNPs red 
+points(expLogPvs[(M-length(assoc)):M],obsLogPvs[(M-length(assoc)):M],col="red")
+```
+<br>
+
+Is there inflation? Use the chi-square statistics to check.
+
+A:0.454 = qchisq(0.5, df=1), that's the the expected median chi-square statistic (under the null hypothesis). Lambda GC is very close to 1 indicates no inflation in this case. 
+```{r}
+chis = zscores ^ 2
+lambdaGC = median(chis)/0.454 # why .454?
+lambdaGC
+```
+<br>
+
+Plot the phenotype predictions for the most significant SNP.
+```{r}
+topSNP = genos[,order(pvalues)[1]]
+plot(topSNP,phenos)
+abline(lm(phenos~topSNP)$coeff,col="red")
+```
+<br>
+
+__Build a linear predictor of the phenotype using the associated SNPs.__
+```{r}
+ypred = array(0,N)
+for(i in 1:N) {
+      ypred[i] = genos[i,assoc] %*% betas[assoc]
+}
+plot(ypred,phenos)
+```
+<br>
+
+What is the correlation between the predicted phenotype and the true phenotype?
+
+A:It's 0.958, they are highly correlated.
+```{r}
+cor(ypred,phenos)
+```
+<br>
+
+__BONUS: Test each of the associated SNPs for non-linearity.__
+```{r}
+hp = array(0,length(assoc))
+for (i in 1:length(assoc)) {
+  g = genos[,assoc[i]]
+  h = g
+  h[h==2]=0
+  #Hint: can use anova(lm(?),lm(?)) or summary(lm(?))
+  hp[i] <- anova( lm(phenos~g), lm(phenos~g * h) )$Pr[2] #skip multiple test correction for now
+}
+hp 
+```
+<br>
+
+BONUS: Visualize a linear SNP and a non-linear SNP.
+
+A:Based on the anova results above, the 5th SNPs has better linear fit and the 1st SNPs is a more non-linear SNP
+```{r}
+par( mfrow=c(1,2) )
+plot( genos[,5], phenos )
+points( c(0,1,2), tapply( phenos,  genos[,5], mean ), col=2, pch=16, cex=3 )
+lines( c(0,1,2), tapply( phenos,  genos[,5], mean ), col=2, lwd=2  )
+plot( genos[, 1], phenos )
+points( c(0,1,2), tapply( phenos, genos[, 1], mean ), col=2, pch=16, cex=3 )
+lines( c(0,1,2), tapply( phenos, genos[, 1], mean ), col=2, lwd=2  )
+```
+<br>
+
+__Repeat the GWAS to test for recessive rather than additive genetic effects.__
+```{r}
+genos2 = genos
+genos2[genos<2]=1
+pvalues2 = array(0,M)
+zscores2 = array(0,M)
+betas2 = array(0,M)
+for(i in 1:M) {
+  g = genos2[,i]
+  res = summary(lm(phenos~g))
+	betas2[i] = res$coefficients[2, "Estimate"]
+	zscores2[i] = res$coefficients[2, "t value"]
+	pvalues2[i] = res$coefficients[2, "Pr(>|t|)"]
+}
+
+betas2[1:10]
+zscores2[1:10]
+pvalues2[1:10]
+```
+<br>
+
+__Are the same SNPs significant or not?__
+
+A:Yes, 1-9 are still significant, 10 is not. 
+```{r}
+assoc2 = which(pvalues2<(0.05/10000))
+assoc2
+```
+<br>
+
+__How did the effect sizes change?__
+
+A:The effect sizes for recessive deviated from the original additive effect. 
+```{r}
+hist(betas2)
+plot(betas,betas2)
+```
+<br>
+
+### PART2: Simulating genotypes with LD.
+
+__Establish some important simulation parameters.__
+```{r}
+N = 1000 #number of individuals
+M = 30   #number of non-causal SNPs
+gs = matrix(0,nrow=N,ncol=M)
+```
+<br>
+
+__Simulate a GWAS data set.__
+
+First, simulate the causal variant.
+```{r}
+set.seed(42) #set random seed so we all get the same numbers
+MAF = 0.5
+gC = rbinom(N,1,MAF) #causal variant
+```
+<br>
+
+Then, simulate the phenotypes given the causal variant.
+```{r}
+beta = 0.3 #association of causal variant
+pheno = gC*beta + rnorm(N) 
+```
+<br>
+
+Generate 10 SNPS in tight LD with the causal SNP.
+
+A：For bonus to theoretically prove they have the right LD, we should prove r^2 is close to the expected rho^2
+```{r}
+set.seed(42)
+rho = 0.9
+for(i in 1:10) {
+  idx = rbinom(N,1,rho)
+  gs[,i]=gC*idx+rbinom(N,1,MAF)*(1-idx)
+  # test they have the right LD empirically
+  cat( 'Observed LD = ', cor( gs[,i], gC ), '\n' )
+  
+  
+  # Bonus: prove they have the right LD theoretically
+  prob_gC = mean(gC)  # Causal variant allele frequency
+  prob_snp = mean(gs[,i])  # Linked SNP allele frequency
+  # Calculate r^2
+  prob_gC1_snp1 = mean((gC == 1) & (gs[,i] == 1))  # p(A1B1)
+  D = prob_gC1_snp1 - (prob_gC * prob_snp)
+  r2 = D^2 / (prob_gC * (1 - prob_gC) * prob_snp * (1 - prob_snp))
+  # Check if r^2 is close to the expected rho^2
+  print(abs(r2 - rho^2) < 0.1)
+}
+```
+<br>
+
+Do the same for 10 moderate LD partners (rho=0.6).
+```{r}
+set.seed(42)
+rho = 0.6
+for(i in 11:20) {
+  idx = rbinom(N,1,rho)
+  gs[,i]=gC*idx+rbinom(N,1,MAF)*(1-idx)
+  # test they have the right LD empirically
+  cat( 'Observed LD = ', cor( gs[,i], gC ), '\n' )
+  
+  
+  
+  # Bonus: prove they have the right LD theoretically
+  prob_gC = mean(gC)  # Causal variant allele frequency
+  prob_snp = mean(gs[,i])  # Linked SNP allele frequency
+  # Calculate r^2
+  prob_gC1_snp1 = mean((gC == 1) & (gs[,i] == 1))  # p(A1B1)
+  D = prob_gC1_snp1 - (prob_gC * prob_snp)
+  r2 = D^2 / (prob_gC * (1 - prob_gC) * prob_snp * (1 - prob_snp))
+  # Check if r^2 is close to the expected rho^2
+  print(abs(r2 - rho^2) < 0.1)
+}
+```
+<br>
+
+Do the same for 10 independent SNPs (rho=0).
+```{r}
+set.seed(42)
+rho = 0
+for(i in 21:30) {
+  idx = rbinom(N,1,rho)
+  gs[,i]=gC*idx+rbinom(N,1,MAF)*(1-idx)
+  # test they have the right LD empirically
+  cat( 'Observed LD = ', cor( gs[,i], gC ), '\n' )
+  
+  
+  
+  # Bonus: prove they have the right LD theoretically
+  prob_gC = mean(gC)  # Causal variant allele frequency
+  prob_snp = mean(gs[,i])  # Linked SNP allele frequency
+  # Calculate r^2
+  prob_gC1_snp1 = mean((gC == 1) & (gs[,i] == 1))  # p(A1B1)
+  D = prob_gC1_snp1 - (prob_gC * prob_snp)
+  r2 = D^2 / (prob_gC * (1 - prob_gC) * prob_snp * (1 - prob_snp))
+  # Check if r^2 is close to the expected rho^2
+  print(abs(r2 - rho^2) < 0.1)
+}
+```
+
+__Run GWAS on the causal variant. Then run GWAS on the other variants. Keep track of the zscores only.__
+```{r}
+zsC = summary(lm(pheno~gC))$coef[2,3]
+zs = sapply( 1:M, function(i) summary(lm(pheno~gs[,i]))$coef[2,3] )
+```
+<br>
+
+Visualize the relationship between the mean z-scores at the tag SNPs and the z-score at the causal SNP.
+```{r}
+par( mfrow=c(2,2) )
+breaks = hist(c(0,zsC,zs),plot=F)$breaks
+hist(zs[1:10],breaks=breaks, col=1, main='LD partners')
+abline(v=zsC)
+hist(zs[11:20],breaks=breaks, col=2, main='Low-LD partner SNPs')
+abline(v=zsC)
+hist(zs[21:30],breaks=breaks, col=3, main='Independent SNPs')
+abline(v=zsC)
+```
+<br>
+
+__BONUS: Perform LD score regression. First, calculate the LD scores. There should be M+1 of them.__
+
+A: by formula, the LD score = sum of the the squared correlations (also, the linkage disequilibrium) values between that SNP and all other SNPs.
+```{r}
+all_snps = cbind(gC, gs)
+
+ldscores = numeric(M+1) 
+
+# Calculate LD scores for all SNPs
+for (i in 1:ncol(all_snps)) {
+  # Calculate r
+  r = cor(all_snps[, i], all_snps) 
+  ldscore = sum(r^2)
+  ldscores[i] = ldscore 
+}
+
+ldscores
+```
+<br>
+
+BONUS: Visualize LD score regression.
+```{r}
+chis = c(zsC^2, zs^2)
+plot( ldscores, chis, ylab=expression(chi^2) )
+#test for inflation
+lambdaGC = median(chis)/0.454
+lambdaGC
+```
+<br>
+
+BONUS: Estimate heritability.
+```{r}
+summary(lm(chis ~ ldscores))$coef[2,1] * M/N
+```
+<br>
+
+BONUS: What is the true heritability?
+
+A:heritability is calculated as the ratio of genetic variance to total phenotypic variance
+```{r}
+var(gC * beta) / var(pheno)
+```
+
+
+
+
+
+
+
+
+
